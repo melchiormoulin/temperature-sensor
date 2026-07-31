@@ -1,52 +1,66 @@
 # Fishtank Temperature Sensor
 
-A Rust service that automatically discovers Linux 1-Wire DS18B20 probes,
-validates each reading, and exports the result through either a Prometheus
-scrape endpoint or OTLP HTTP/protobuf.
+A Rust service for monitoring DS18B20 temperature probes through the Linux
+1-Wire interface. It:
+
+- discovers attached probes on every polling cycle;
+- validates each reading before publishing it;
+- exports metrics through Prometheus or OTLP over HTTP/protobuf;
+- exposes a process liveness endpoint.
 
 Metric definitions and Rust instrument constructors are generated from an
-[OpenTelemetry Weaver](https://github.com/open-telemetry/weaver) registry. The
-registry imports the official OpenTelemetry `hw.temperature` and `hw.errors`
-semantic conventions.
+[OpenTelemetry Weaver](https://github.com/open-telemetry/weaver) registry that
+imports the official `hw.temperature` and `hw.errors` semantic conventions.
+See the [generated metric reference](docs/generated/metrics.md) for instrument
+and attribute details.
 
-## Run Locally
+## Contents
 
-The defaults match a Raspberry Pi with 1-Wire enabled and use the standard OTLP
-metrics exporter:
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Metrics and Health](#metrics-and-health)
+- [Container](#container)
+- [Hardware Setup](#hardware-setup)
+- [Development](#development)
+
+## Quick Start
+
+The defaults target a Raspberry Pi with 1-Wire enabled. The service reads
+`/sys/bus/w1/devices` every five seconds and exports metrics to an OTLP
+collector at `http://localhost:4318`:
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 cargo run --release
 ```
 
-To expose Prometheus metrics instead:
+To expose Prometheus metrics on port `9100` instead:
 
 ```bash
 OTEL_METRICS_EXPORTER=prometheus cargo run --release
 ```
 
-The application exits at startup if the device root is missing or unreadable.
-It is valid for the directory to contain no sensors; newly attached probes are
-discovered during later polling cycles.
+The service exits at startup if the device root is missing or unreadable. An
+empty directory is valid; probes attached later are discovered on a subsequent
+polling cycle.
 
-```text
-Usage: temperature-sensor [OPTIONS]
+## Configuration
 
-Options:
-      --listen <LISTEN>                [default: 0.0.0.0:9100]
-      --device-root <DEVICE_ROOT>      [default: /sys/bus/w1/devices]
-      --poll-interval <POLL_INTERVAL>  [default: 5s]
-  -h, --help
-  -V, --version
-```
+### Command-Line Options
 
-Durations accept values such as `500ms`, `5s`, and `1m`. A zero polling
-interval is rejected.
+| Option | Default | Description |
+|---|---|---|
+| `--listen <ADDRESS>` | `0.0.0.0:9100` | Address for health and optional Prometheus HTTP endpoints |
+| `--device-root <PATH>` | `/sys/bus/w1/devices` | Directory containing `28-*` 1-Wire devices |
+| `--poll-interval <DURATION>` | `5s` | Delay between sensor polling cycles |
+| `-h`, `--help` | | Print command help |
+| `-V`, `--version` | | Print the service version |
 
-### OpenTelemetry Configuration
+Durations accept values such as `500ms`, `5s`, and `1m`. The polling interval
+must be greater than zero.
 
-Exporter configuration uses the standard OpenTelemetry environment variables
-instead of a project-specific configuration file:
+### OpenTelemetry
+
+Exporter configuration uses standard OpenTelemetry environment variables:
 
 | Variable | Purpose | Default |
 |---|---|---|
@@ -60,28 +74,30 @@ instead of a project-specific configuration file:
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes | unset |
 | `RUST_LOG` | Rust tracing filter | `info` |
 
-Exporter names are case-insensitive. An empty selector uses the standard `otlp`
-default; an unsupported selector logs a warning and falls back to `otlp`. The
-OTLP protocol is intentionally fixed to HTTP/protobuf. Do not put secrets in
-command-line flags because command lines are visible through process inspection;
-use `OTEL_EXPORTER_OTLP_HEADERS` or inject credentials through the deployment
-platform.
+Exporter values are case-insensitive. An empty selector uses the standard
+`otlp` default; an unsupported value logs a warning and falls back to `otlp`.
+The OTLP protocol is fixed to HTTP/protobuf.
 
-## Endpoints
+Do not put secrets in command-line flags because command lines are visible
+through process inspection. Use `OTEL_EXPORTER_OTLP_HEADERS` or inject
+credentials through the deployment platform.
 
-| Endpoint | Description |
-|---|---|
-| `GET /metrics` | Prometheus text exposition when `OTEL_METRICS_EXPORTER=prometheus` |
-| `GET /healthz` | Process liveness |
+## Metrics and Health
 
-Verify liveness, and verify metrics when Prometheus is selected:
+| Endpoint | Availability | Description |
+|---|---|---|
+| `GET /healthz` | Always | Process liveness |
+| `GET /metrics` | Prometheus exporter only | Prometheus text exposition |
+
+With the Prometheus exporter selected, verify both endpoints with:
 
 ```bash
 curl --fail http://localhost:9100/healthz
 curl --fail http://localhost:9100/metrics
 ```
 
-The OpenTelemetry Prometheus exporter translates semantic names and units:
+The OpenTelemetry Prometheus exporter translates OTLP names and units as
+follows:
 
 | OTLP metric | Prometheus metric | Description |
 |---|---|---|
@@ -90,10 +106,10 @@ The OpenTelemetry Prometheus exporter translates semantic names and units:
 | `fishtank.sensor.up` | `fishtank_sensor_up_ratio` | Most recent read status by `hw_id` |
 | `fishtank.sensor.count` | `fishtank_sensor_count` | Currently discovered probe count |
 
-Invalid CRC, malformed, out-of-range, timed-out, and I/O readings do not publish
-a stale temperature. A disappeared probe remains represented with
-`fishtank_sensor_up_ratio 0` for one polling cycle and is then pruned. Error
-types are bounded to `crc`, `format`, `io`, `not_found`, `range`, and `timeout`.
+Invalid CRC, malformed, out-of-range, timed-out, and I/O readings never publish
+a stale temperature. A disappeared probe reports `fishtank_sensor_up_ratio 0`
+for one polling cycle before it is pruned. Error types are bounded to `crc`,
+`format`, `io`, `not_found`, `range`, and `timeout`.
 
 Example Prometheus scrape configuration:
 
@@ -106,73 +122,47 @@ scrape_configs:
 
 ## Container
 
-The image runs as numeric user `65532`, has no Linux capabilities, and only
-needs read-only access to the 1-Wire device directory. Compose mounts the host
-directory at `/devices` and passes `--device-root /devices`; privileged mode is
-not required.
+Compose mounts the host 1-Wire directory at `/devices` and configures the
+service to read from that path:
 
 ```bash
 cp .env.example .env
 docker compose up --detach --build
 ```
 
+The image runs as numeric user `65532`, drops all Linux capabilities, and only
+needs read-only access to the device directory. Privileged mode is not
+required.
+
 The example environment selects Prometheus. To use OTLP, set
-`OTEL_METRICS_EXPORTER=otlp` and set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector
-reachable from the container.
+`OTEL_METRICS_EXPORTER=otlp` and point `OTEL_EXPORTER_OTLP_ENDPOINT` at a
+collector reachable from the container.
 
 `localhost` inside the container refers to the container itself. Use the
 collector's Compose service name, host gateway, or LAN address as appropriate.
-The same Dockerfile builds natively on Raspberry Pi OS. Cross-build an ARM64
-image from another host with:
+
+The Dockerfile builds natively on Raspberry Pi OS. To cross-build an ARM64
+image from another host:
 
 ```bash
 docker buildx build --platform linux/arm64 --tag temperature-sensor:local --load .
 ```
 
-## Weaver Workflow
+## Hardware Setup
 
-The application telemetry registry is under `registry/`. It uses Weaver schema
-format `definition/2`, which Weaver `0.25.1` still labels experimental. Both the
-Weaver container image version and the OpenTelemetry semantic-conventions
-dependency are pinned to keep generation reproducible. Docker is the only
-Weaver prerequisite; no host Weaver installation is needed.
+### Requirements
 
-Run:
-
-```bash
-make registry-check
-make generate
-```
-
-`make generate` validates project policies, regenerates `src/generated/`, runs
-Rustfmt on generated Rust, and updates `docs/generated/metrics.md`. Generated
-files are committed so production builds never need Weaver or network access.
-CI uses the same Docker image to regenerate them and fails on drift.
-
-## Development Checks
-
-```bash
-make check
-```
-
-This runs Rustfmt, Clippy with warnings denied, all tests, and a locked release
-build. Tests cover DS18B20 parsing and discovery, Prometheus exposition, and an
-actual OTLP HTTP/protobuf export to a local receiver.
-
-## Hardware Installation
-
-### Prerequisites
-
-- Raspberry Pi 4 with the 40-pin `J8` GPIO header
+- Raspberry Pi with the 40-pin `J8` GPIO header (tested on Raspberry Pi 4)
 - Raspberry Pi OS and a user with `sudo` access
-- One probe and adapter from the [BTFO DS18B20 kit](https://www.amazon.fr/dp/B0GT3XBDXM)
-- One supplied 4.7 kOhm resistor
+- One DS18B20 probe and adapter, tested with the
+  [BTFO DS18B20 kit](https://www.amazon.fr/dp/B0GT3XBDXM)
+- One 4.7 kOhm pull-up resistor
 - Three female jumper wires or a breadboard
 
 Raspberry Pi OS already includes the Linux 1-Wire driver and Python 3. No
 third-party Python package is required.
 
-### Working Pin Layout
+### Wire the Probe
 
 Power off and unplug the Pi before changing GPIO connections:
 
@@ -181,8 +171,8 @@ sudo poweroff
 ```
 
 View the Pi from above with the Ethernet/USB connectors on the right and the
-USB-C/micro-HDMI connectors along the bottom. The row nearest the centre of
-the board is the bottom row in this diagram:
+USB-C/micro-HDMI connectors along the bottom. The row nearest the centre of the
+board is the bottom row in this diagram:
 
 ```text
 Outside/top edge of the board
@@ -287,3 +277,33 @@ PY
   connection or electrical noise.
 - Run `pinout` on the Pi to display the physical header orientation and BCM
   GPIO numbers.
+
+## Development
+
+### Checks
+
+```bash
+make check
+```
+
+This runs rustfmt, Clippy with warnings denied, all tests, and a locked release
+build. Tests cover DS18B20 parsing and discovery, Prometheus exposition, and an
+actual OTLP export over HTTP/protobuf to a local receiver.
+
+### Generate Telemetry Code and Documentation
+
+The telemetry registry is under `registry/`. It uses Weaver schema format
+`definition/2`, which Weaver `0.25.1` still labels experimental. The Weaver
+container image and OpenTelemetry semantic-conventions dependency are pinned
+for reproducible generation. Docker is the only prerequisite; no host Weaver
+installation is needed.
+
+```bash
+make registry-check
+make generate
+```
+
+`make generate` validates project policies, regenerates `src/generated/`, runs
+rustfmt on generated Rust, and updates `docs/generated/metrics.md`. Generated
+files are committed so production builds never require Weaver or network
+access. CI regenerates them with the same container image and fails on drift.
