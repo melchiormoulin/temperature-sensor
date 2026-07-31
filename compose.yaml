@@ -1,0 +1,26 @@
+services:
+  temperature-sensor:
+    build:
+      context: .
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "9100:9100"
+    command:
+      - --device-root
+      - /devices
+    volumes:
+      - /sys/bus/w1/devices:/devices:ro
+    environment:
+      OTEL_METRICS_EXPORTER: "${OTEL_METRICS_EXPORTER:-otlp}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
+      OTEL_EXPORTER_OTLP_HEADERS: "${OTEL_EXPORTER_OTLP_HEADERS:-}"
+      OTEL_EXPORTER_OTLP_METRICS_TIMEOUT: "${OTEL_EXPORTER_OTLP_METRICS_TIMEOUT:-10000}"
+      OTEL_METRIC_EXPORT_INTERVAL: "${OTEL_METRIC_EXPORT_INTERVAL:-30000}"
+      OTEL_SERVICE_NAME: "${OTEL_SERVICE_NAME:-fishtank-temperature-sensor}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    stop_grace_period: 15s

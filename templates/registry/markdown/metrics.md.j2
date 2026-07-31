@@ -1,0 +1,23 @@
+# Generated Metrics
+
+This file is generated from the OpenTelemetry Weaver registry. Do not edit it directly.
+
+{% for metric in ctx %}
+## `{{ metric.name }}`
+
+{{ metric.brief }}
+
+| Property | Value |
+|---|---|
+| Instrument | `{{ metric.instrument }}` |
+| Unit | `{{ metric.unit }}` |
+| Stability | `{{ metric.stability }}` |
+
+{% if metric.attributes %}
+| Attribute | Requirement |
+|---|---|
+{% for attribute in metric.attributes %}
+| `{{ attribute.key }}` | `{{ attribute.requirement_level }}` |
+{% endfor %}
+{% endif %}
+{% endfor %}

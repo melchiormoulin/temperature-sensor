@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/open-telemetry/weaver/v0.25.1/schemas/semconv.schema.v2.json
+file_format: definition/2
+
+imports:
+  metrics:
+    - hw.errors
+    - hw.temperature
+
+metrics:
+  - name: fishtank.sensor.up
+    requirement_level: recommended
+    annotations:
+      code_generation:
+        metric_value_type: int
+    stability: development
+    brief: Whether the most recent read from a temperature sensor succeeded.
+    note: The value is `1` after a valid read and `0` after a failed read or disappearance.
+    instrument: gauge
+    unit: "1"
+    attributes:
+      - ref: hw.id
+        requirement_level: required
+
+  - name: fishtank.sensor.count
+    requirement_level: recommended
+    annotations:
+      code_generation:
+        metric_value_type: int
+    stability: development
+    brief: Number of DS18B20 temperature sensors currently discovered.
+    instrument: gauge
+    unit: "{sensor}"

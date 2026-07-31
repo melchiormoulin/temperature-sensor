@@ -1,0 +1,22 @@
+whitespace_control:
+  trim_blocks: true
+  lstrip_blocks: true
+
+comment_formats:
+  rust:
+    format: markdown
+    prefix: "/// "
+    trim: true
+    remove_trailing_dots: false
+    escape_square_brackets: true
+default_comment_format: rust
+
+templates:
+  - pattern: schema.rs.j2
+    application_mode: single
+  - pattern: attributes.rs.j2
+    filter: '[.registry.metrics[].attributes[]?] | unique_by(.key)'
+    application_mode: single
+  - pattern: metrics.rs.j2
+    filter: .registry.metrics
+    application_mode: single

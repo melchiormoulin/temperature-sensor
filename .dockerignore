@@ -1,0 +1,10 @@
+.git
+.github
+.env
+target
+docs
+registry
+templates
+tests
+README.md
+compose.yaml

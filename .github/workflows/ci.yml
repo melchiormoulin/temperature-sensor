@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      - name: Check generated telemetry
+        run: make check-generated
+
+      - name: Check Rust project
+        run: make check
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build container
+        run: docker build --tag temperature-sensor:test .
+
+      - name: Smoke test hardened container
+        run: |
+          docker run --detach --name temperature-sensor-test \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --publish 127.0.0.1:19100:9100 \
+            --volume "$PWD/tests/fixtures/devices:/devices:ro" \
+            --env OTEL_METRICS_EXPORTER=prometheus \
+            temperature-sensor:test --device-root /devices
+          trap 'docker rm --force temperature-sensor-test >/dev/null 2>&1 || true' EXIT
+
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:19100/healthz >/dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+
+          test "$(docker image inspect temperature-sensor:test --format '{{.Config.User}}')" = "65532:65532"
+          metrics="$(curl --fail --silent http://127.0.0.1:19100/metrics)"
+          case "$metrics" in
+            *'hw_temperature_celsius{hw_id="28-000000000001"} 24.562'*) ;;
+            *) printf '%s\n' "$metrics"; exit 1 ;;
+          esac

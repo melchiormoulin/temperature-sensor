@@ -1,0 +1,7 @@
+name: fishtank-temperature-sensor
+description: Telemetry emitted by the fishtank DS18B20 temperature sensor service.
+schema_url: https://github.com/melchiormoulin/temperature-sensor/schemas/0.1.0
+dependencies:
+  - name: otel
+    schema_url: https://opentelemetry.io/schemas/1.43.0
+    registry_path: https://github.com/open-telemetry/semantic-conventions/archive/refs/tags/v1.43.0.zip[model]
