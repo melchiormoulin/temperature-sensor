@@ -14,7 +14,11 @@ services:
       - --device-root
       - /devices
     volumes:
-      - /sys/bus/w1/devices:/devices:ro
+      # Mount the master directory, which holds the probes as real directories.
+      # /sys/bus/w1/devices holds only relative symlinks into this path, and
+      # they resolve back through the bind mount into a loop inside the
+      # container, so reads there fail with ELOOP.
+      - /sys/devices/w1_bus_master1:/devices:ro
     environment:
       OTEL_METRICS_EXPORTER: "${OTEL_METRICS_EXPORTER:-otlp}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
