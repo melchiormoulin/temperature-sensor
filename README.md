@@ -351,6 +351,46 @@ image from another host:
 docker buildx build --platform linux/arm64 --tag temperature-sensor:local --load .
 ```
 
+### Rootless Podman
+
+Rootless Podman runs this stack unchanged apart from two differences, both
+verified against Podman `5.4.2` and podman-compose `1.3.0`.
+
+Boot persistence needs a different restart policy. `podman-restart.service`
+starts containers with `podman start --all --filter restart-policy=always`,
+and that filter does not match the `unless-stopped` policy in `compose.yaml`,
+so the container stays stopped after a reboot. Override it in a
+`compose.override.yaml` beside `compose.yaml`, which leaves the Docker
+behaviour untouched:
+
+```yaml
+services:
+  temperature-sensor:
+    restart: always
+```
+
+Rootless containers also need a user manager that outlives the login session,
+so enable lingering and the restart unit once:
+
+```bash
+loginctl enable-linger
+systemctl --user enable --now podman-restart.service
+```
+
+Note that `always` restarts a container you stopped deliberately the next time
+the machine boots, which `unless-stopped` does not.
+
+podman-compose does not apply `${VARIABLE:-default}` fallbacks. Any variable
+left unset in `.env` reaches the container as that literal string, which shows
+up in exported metrics as `service_name="${OTEL_SERVICE_NAME:-...}"`. Set the
+defaults explicitly in `.env`:
+
+```bash
+OTEL_SERVICE_NAME=fishtank-temperature-sensor
+OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10000
+OTEL_EXPORTER_OTLP_HEADERS=
+```
+
 ## How It Works
 
 The Linux kernel handles the 1-Wire protocol and presents each probe as a
