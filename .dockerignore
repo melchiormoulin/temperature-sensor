@@ -3,6 +3,7 @@
 .env
 target
 docs
+monitoring
 registry
 templates
 tests

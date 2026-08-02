@@ -30,3 +30,20 @@ metrics:
     brief: Number of DS18B20 temperature sensors currently discovered.
     instrument: gauge
     unit: "{sensor}"
+
+metric_refinements:
+  - id: slo.fishtank.temperature
+    ref: hw.temperature
+    annotations:
+      sloth:
+        service: fishtank-temperature-sensor
+        name: temperature-compliance
+        objective: 99.9
+        description: Prometheus temperature evaluations at or below 24 degrees Celsius.
+        prometheus_metric: hw_temperature_celsius
+        prometheus_selector: 'job="fishtank-temperature"'
+        error_operator: ">"
+        threshold: 24
+        alert_name: FishtankTemperatureTooHigh
+        page_severity: critical
+        ticket_severity: warning

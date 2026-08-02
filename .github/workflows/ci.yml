@@ -18,7 +18,7 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup show
 
-      - name: Check generated telemetry
+      - name: Check generated telemetry and SLO rules
         run: make check-generated
 
       - name: Check Rust project

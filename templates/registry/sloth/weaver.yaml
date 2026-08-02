@@ -1,0 +1,8 @@
+whitespace_control:
+  trim_blocks: true
+  lstrip_blocks: true
+
+templates:
+  - pattern: sloth.yaml.j2
+    filter: '[.refinements.metrics[] | select(.annotations.sloth)]'
+    application_mode: single

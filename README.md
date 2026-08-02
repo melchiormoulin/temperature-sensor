@@ -322,6 +322,30 @@ scrape_configs:
       - targets: ["raspberry-pi:9100"]
 ```
 
+### Temperature SLO
+
+The telemetry registry defines a `temperature-compliance` SLO: over Sloth's
+default 30-day period, 99.9% of evaluated temperatures must be at or below
+`24 C`. At each Prometheus rule evaluation, every currently queryable probe
+contributes one value to the service-wide ratio. Exactly `24 C` is valid; only
+higher values consume the error budget. The queries expect the scrape label
+`job="fishtank-temperature"`, as in the configuration above.
+
+The Sloth specification disables its long-window ratio optimization so periods
+with different numbers of queryable probes remain weighted by the number of
+evaluated temperatures.
+
+[OpenTelemetry Weaver](https://github.com/open-telemetry/weaver) generates the
+[Sloth](https://github.com/slok/sloth) specification at
+[`monitoring/generated/sloth.yaml`](monitoring/generated/sloth.yaml). Sloth
+then generates the recording and multi-window, multi-burn-rate alert rules at
+[`monitoring/generated/prometheus-rules.yaml`](monitoring/generated/prometheus-rules.yaml).
+Configure Prometheus to load that rules file.
+
+Missing or invalid readings are excluded whenever no temperature series is
+queryable at an evaluation point. Use `fishtank_sensor_up_ratio` and
+`fishtank_sensor_count` for separate sensor-availability alerts.
+
 ## Container
 
 For a long-running deployment, start Compose in the background and follow its
@@ -420,7 +444,8 @@ src/sensor.rs -> shared sensor snapshot -> src/telemetry.rs
 | [`src/sensor.rs`](src/sensor.rs) | Discovers probes, validates readings, and maintains the current snapshot |
 | [`src/telemetry.rs`](src/telemetry.rs) | Converts the snapshot and failures into OpenTelemetry metrics |
 | [`src/http.rs`](src/http.rs) | Serves `/healthz` and, when enabled, `/metrics` |
-| [`registry/`](registry/) | Defines the metric schema used to generate Rust instruments and documentation |
+| [`registry/`](registry/) | Defines the metric schema and SLO metadata used for generation |
+| [`monitoring/generated/`](monitoring/generated/) | Contains generated Sloth input and Prometheus SLO rules |
 
 ### One Polling Cycle
 
@@ -441,7 +466,8 @@ Metric definitions and Rust instrument constructors are generated from an
 [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver) registry that
 imports the official `hw.temperature` and `hw.errors` semantic conventions.
 See the [generated metric reference](docs/generated/metrics.md) for instrument
-and attribute details.
+and attribute details. A refinement of `hw.temperature` also generates the
+temperature SLO and its Prometheus rules without changing the runtime metric.
 
 ## Development
 
@@ -455,20 +481,24 @@ This runs rustfmt, Clippy with warnings denied, all tests, and a locked release
 build. Tests cover DS18B20 parsing and discovery, Prometheus exposition, and an
 actual OTLP export over HTTP/protobuf to a local receiver.
 
-### Generate Telemetry Code and Documentation
+### Generate Telemetry and SLO Artifacts
 
 The telemetry registry is under `registry/`. It uses Weaver schema format
 `definition/2`, which Weaver `0.25.1` still labels experimental. The Weaver
-container image and OpenTelemetry semantic-conventions dependency are pinned
-for reproducible generation. Docker is the only prerequisite; no host Weaver
-installation is needed.
+and Sloth `0.16.0` container images and the OpenTelemetry
+semantic-conventions dependency are pinned for reproducible generation. An OCI
+container engine (Docker or Podman) and the project's pinned Rust toolchain with
+rustfmt are required; no host Weaver or Sloth installation is needed.
 
 ```bash
 make registry-check
+make sloth-check
 make generate
 ```
 
 `make generate` validates project policies, regenerates `src/generated/`, runs
-rustfmt on generated Rust, and updates `docs/generated/metrics.md`. Generated
-files are committed so production builds never require Weaver or network
-access. CI regenerates them with the same container image and fails on drift.
+rustfmt on generated Rust, updates `docs/generated/metrics.md`, renders the
+Sloth specification, validates it, and generates Prometheus SLO rules.
+Generated files are committed so production builds never require Weaver,
+Sloth, or network access. CI regenerates them with the same container images
+and fails on drift.

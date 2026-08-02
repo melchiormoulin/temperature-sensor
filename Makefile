@@ -19,8 +19,15 @@ WEAVER := $(CONTAINER_ENGINE) run --rm $(WEAVER_RUN_ARGS) \
 	--workdir /home/weaver \
 	"$(WEAVER_IMAGE)"
 WEAVER_COMMON := registry
+SLOTH_VERSION := 0.16.0
+SLOTH_IMAGE := ghcr.io/slok/sloth:v$(SLOTH_VERSION)
+SLOTH := $(CONTAINER_ENGINE) run --rm $(WEAVER_RUN_ARGS) \
+	--user "$(shell id -u):$(shell id -g)" \
+	--volume "$(CURDIR):/work$(WEAVER_VOLUME_SUFFIX)" \
+	--workdir /work \
+	"$(SLOTH_IMAGE)"
 
-.PHONY: all check docker-build docker-run generate check-generated registry-check
+.PHONY: all check docker-build docker-run generate check-generated registry-check sloth-check
 
 all: check
 
@@ -48,7 +55,14 @@ registry-check:
 		--v2 \
 		--policy registry/policies
 
-generate: registry-check
+sloth-check:
+	@version="$$($(SLOTH) version)"; \
+	case "$$version" in \
+		"v$(SLOTH_VERSION)") ;; \
+		*) echo "expected sloth v$(SLOTH_VERSION), found $$version" >&2; exit 1 ;; \
+	esac
+
+generate: registry-check sloth-check
 	$(WEAVER) $(WEAVER_COMMON) generate \
 		--registry registry \
 		--templates templates \
@@ -62,9 +76,24 @@ generate: registry-check
 		--v2 \
 		--policy registry/policies \
 		markdown docs/generated
+	$(WEAVER) $(WEAVER_COMMON) generate \
+		--registry registry \
+		--templates templates \
+		--v2 \
+		--policy registry/policies \
+		sloth monitoring/generated
+	$(SLOTH) validate --no-color --input monitoring/generated/sloth.yaml
+	$(SLOTH) generate --no-color \
+		--input monitoring/generated/sloth.yaml \
+		--out monitoring/generated/prometheus-rules.yaml
 
 check-generated: generate
-	git diff --exit-code -- src/generated docs/generated
+	git diff --exit-code -- src/generated docs/generated monitoring/generated
+	@untracked="$$(git ls-files --others --exclude-standard -- src/generated docs/generated monitoring/generated)"; \
+	if [ -n "$$untracked" ]; then \
+		printf 'untracked generated files:\n%s\n' "$$untracked" >&2; \
+		exit 1; \
+	fi
 
 check:
 	cargo fmt --check
